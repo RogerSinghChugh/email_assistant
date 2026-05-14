@@ -105,11 +105,18 @@ CACHES = {
         "LOCATION": REDIS_URL,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            # Graceful degradation: if Redis is unreachable, cache calls return
+            # None / no-op instead of raising. Reads fall through to the DB;
+            # writes get dropped. The app stays up.
+            "IGNORE_EXCEPTIONS": True,
         },
         "KEY_PREFIX": "email_assistant",
         "TIMEOUT": 300,
     }
 }
+# Log when django-redis swallows a Redis exception so outages aren't silent.
+DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS = True
+DJANGO_REDIS_LOGGER = "django_redis"
 
 # --- Celery -------------------------------------------------------------
 CELERY_BROKER_URL = env(
@@ -242,6 +249,11 @@ LOGGING = {
             "propagate": False,
         },
         "httpx": {
+            "handlers": ["console", "logfile"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "django_redis": {
             "handlers": ["console", "logfile"],
             "level": "WARNING",
             "propagate": False,

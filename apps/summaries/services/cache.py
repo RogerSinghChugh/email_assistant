@@ -8,9 +8,14 @@ SUMMARY_TTL_SECONDS = 60 * 60  # 1 hour
 LOCK_TTL_SECONDS = 120  # 2 minutes — comfortably more than an LLM call
 INFLIGHT_TTL_SECONDS = 120  # mirrors LOCK_TTL — auto-clears if a worker dies mid-task
 
+# Bump when the cached SummaryReadSerializer shape changes so old payloads
+# don't get served after a deploy. Locks/inflight keys don't carry payload
+# data, so they're not versioned.
+SUMMARY_CACHE_VERSION = 1
+
 
 def summary_key(thread_id) -> str:
-    return f"summary:{thread_id}"
+    return f"summary:v{SUMMARY_CACHE_VERSION}:{thread_id}"
 
 
 def lock_key(thread_id) -> str:
@@ -52,15 +57,3 @@ def release_inflight(thread_id) -> None:
 
 def invalidate_summary(thread_id) -> None:
     cache.delete(summary_key(thread_id))
-
-
-def invalidate_firm_reports(firm_id) -> None:
-    """Best-effort: delete all per-firm report keys.
-
-    django-redis exposes ``cache.delete_pattern`` for this. Wrapped in a try
-    so the call is safe under in-memory cache backends used in tests.
-    """
-    try:
-        cache.delete_pattern(f"report:firm:{firm_id}:*")
-    except (AttributeError, NotImplementedError):
-        pass

@@ -161,8 +161,9 @@ flowchart LR
 - Generation is explicit: `POST .../refresh/` enqueues a Celery task and returns `202 + task_id`. Client polls `GET /api/tasks/{id}/`.
 
 ### Caching & invalidation
-- Decrypted summary cached in Redis under `summary:{thread_id}`, TTL 1h.
-- Refresh task invalidates `summary:{thread_id}` and per-firm report keys on success.
+- Decrypted summary cached in Redis under `summary:v{N}:{thread_id}`, TTL 1h. The `v{N}` version segment lets a serializer-shape change invalidate the cache namespace by bumping `SUMMARY_CACHE_VERSION` in `apps/summaries/services/cache.py` — old payloads orphan and TTL out instead of being served against a new client.
+- **Post-commit invalidation**: `SummaryService.refresh` wraps the DB upsert in `transaction.atomic` and queues `invalidate_summary` via `transaction.on_commit` (`apps/summaries/services/summarizer.py`). Closes the write-then-invalidate race — the cache delete only fires once the new row is durable, so concurrent readers can't repopulate from the old DB state.
+- **Graceful Redis outage**: `CACHES["default"]["OPTIONS"]["IGNORE_EXCEPTIONS"] = True`. If Redis is unreachable, cache reads return `None` (we fall through to the DB), cache writes drop silently, and `django_redis` logs the swallowed exception at WARNING — the app stays up.
 - DRF `summary_refresh` throttle scope at 10/min/firm to keep LLM cost bounded.
 
 ### Concurrent refresh handling (two layers of dedup)
@@ -226,6 +227,13 @@ python manage.py test
 - **Signoz (OpenTelemetry)** — `opentelemetry-instrumentation-django` + `opentelemetry-instrumentation-celery` → OTLP exporter to a local Signoz collector. Adds traces + RED metrics without touching app code. Out of scope here; logfile JSON is the bridge.
 - **Deterministic encryption / searchable fields** — if subject/body search becomes a requirement, switch those columns to AES-SIV (deterministic) or maintain a parallel HMAC-hashed token index.
 - **Soft-delete + audit log** — `deleted_at` on rows, an `AuditEvent` table for who-did-what.
+
+---
+
+## Deployment notes (not wired here, but worth doing)
+
+- **Redis eviction policy.** Set `maxmemory-policy allkeys-lru` (or `volatile-lru` if you want to protect un-TTL'd keys — we don't have any). Default is `noeviction`, which makes Redis hard-error on writes when memory is full. With `allkeys-lru`, cold summary entries are evicted first; the lock and inflight keys (TTL 120s) are the youngest and survive.
+- **Redis persistence.** AOF (`appendonly yes`) or RDB snapshotting protects against cold restarts. For our use case the cache can be lost without correctness impact (DB is source of truth), so `appendonly no` is fine — the next reads simply repopulate from DB.
 
 ---
 

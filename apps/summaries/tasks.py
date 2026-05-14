@@ -8,8 +8,6 @@ from celery import shared_task
 
 from apps.summaries.services.cache import (
     acquire_lock,
-    invalidate_firm_reports,
-    invalidate_summary,
     release_inflight,
     release_lock,
 )
@@ -22,8 +20,9 @@ logger = logging.getLogger(__name__)
 def refresh_summary_task(self, thread_id: str) -> dict:
     """Idempotent refresh task.
 
-    Acquires a Redis SETNX lock so concurrent triggers don't fan out to N LLM calls.
-    Invalidates the summary cache + per-firm report cache on success.
+    Acquires a Redis SETNX lock so concurrent triggers don't fan out to N LLM
+    calls. Summary cache invalidation is owned by ``SummaryService.refresh``
+    (post-commit, race-free) — we just bookkeep the lock/inflight keys here.
     """
     if not acquire_lock(thread_id):
         logger.info(
@@ -34,8 +33,6 @@ def refresh_summary_task(self, thread_id: str) -> dict:
 
     try:
         result = SummaryService().refresh(thread_id)
-        invalidate_summary(thread_id)
-        invalidate_firm_reports(result.summary.firm_id)
         return {
             "status": "ok",
             "thread_id": str(result.summary.thread_id),
