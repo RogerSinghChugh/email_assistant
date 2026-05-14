@@ -127,6 +127,7 @@ flowchart LR
 | File | Why |
 |---|---|
 | `apps/summaries/services/summarizer.py` | Heart of the system. Orchestrates LLM → Pydantic → encrypted upsert. |
+| `apps/summaries/services/prompts.py` | System prompt + user-prompt builder. Iterate on prompt copy here without touching transport/parsing code. |
 | `apps/summaries/services/llm_client.py` | OpenRouter via the OpenAI-compatible SDK; swap models with `LLM_MODEL` env. |
 | `apps/summaries/tasks.py` | Celery refresh task + Redis SETNX lock + cache invalidation. |
 | `apps/summaries/views.py` | Strict-404 GET + 202 refresh + task polling. Cache wraps reads. |
