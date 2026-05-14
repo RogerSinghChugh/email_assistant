@@ -225,3 +225,11 @@ __marimo__/
 
 # local resources
 resources/
+
+# Playwright artifacts from local UI smoke-testing
+.playwright-mcp/
+ui-*.png
+
+
+temp.txt
+QA_QUESTIONS.md

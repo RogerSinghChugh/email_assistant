@@ -1,0 +1,173 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Email Context</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      [hidden] { display: none !important; }
+      .msg-body { white-space: pre-wrap; }
+    </style>
+  </head>
+  <body class="bg-slate-50 text-slate-800 min-h-screen">
+    <nav class="bg-white border-b border-slate-200">
+      <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-6">
+        <a href="#/thread" class="font-semibold text-indigo-700">Email Context</a>
+        <a href="#/thread" data-nav="thread" class="text-sm text-slate-600 hover:text-slate-900" hidden>Thread</a>
+        <a href="#/reports" data-nav="reports" class="text-sm text-slate-600 hover:text-slate-900" hidden>Reports</a>
+        <div class="ml-auto flex items-center gap-3">
+          <span id="me-badge" class="text-xs text-slate-500" hidden></span>
+          <button id="logout-btn" class="text-xs text-slate-500 hover:text-red-600" hidden>Logout</button>
+        </div>
+      </div>
+    </nav>
+
+    <main class="max-w-6xl mx-auto px-4 py-8">
+      <!-- LOGIN -->
+      <section id="screen-login" hidden>
+        <div class="max-w-md mx-auto bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+          <h1 class="text-xl font-semibold mb-1">Sign in</h1>
+          <p class="text-sm text-slate-500 mb-5">Default credentials are prefilled for the demo.</p>
+          <form id="login-form" class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium mb-1">Email</label>
+              <input id="login-email" type="email" required
+                     value="firm1_admin0@example.com"
+                     class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1">Password</label>
+              <input id="login-password" type="password" required
+                     value="Passw0rd!"
+                     class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+            </div>
+            <div id="login-error" class="text-sm text-red-600" hidden></div>
+            <button type="submit"
+                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded">
+              Sign in
+            </button>
+          </form>
+          <p class="mt-4 text-xs text-slate-400">
+            Tip: <code class="bg-slate-100 px-1 rounded">python manage.py seed_data</code> prints all seeded users.
+          </p>
+        </div>
+      </section>
+
+      <!-- THREAD -->
+      <section id="screen-thread" hidden>
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-5 mb-6">
+          <label class="block text-sm font-medium mb-1">Thread UUID</label>
+          <div class="flex gap-2">
+            <input id="thread-input" type="text" placeholder="e.g. 971cfdf2-7485-4402-9ea6-a38638be092f"
+                   class="flex-1 font-mono text-sm border border-slate-300 rounded px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+            <button id="thread-load" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 rounded">
+              Load
+            </button>
+          </div>
+          <p class="mt-2 text-xs text-slate-500">
+            Or pick a sample thread from your firm below.
+          </p>
+          <div id="thread-error" class="mt-3 text-sm text-red-600" hidden></div>
+
+          <div id="sample-threads" class="mt-4" hidden>
+            <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Sample threads</div>
+            <div id="sample-threads-list" class="flex flex-wrap gap-2"></div>
+          </div>
+        </div>
+
+        <div id="thread-body" class="grid grid-cols-1 lg:grid-cols-5 gap-6" hidden>
+          <!-- Messages -->
+          <div class="lg:col-span-3 bg-white rounded-lg shadow-sm border border-slate-200 p-5">
+            <div class="flex items-baseline justify-between mb-3">
+              <h2 id="thread-subject" class="text-lg font-semibold"></h2>
+              <span id="thread-meta" class="text-xs text-slate-500"></span>
+            </div>
+            <div id="thread-messages" class="space-y-4"></div>
+          </div>
+
+          <!-- Summary -->
+          <aside class="lg:col-span-2 bg-white rounded-lg shadow-sm border border-slate-200 p-5 self-start">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Summary</h3>
+              <span id="summary-stale" class="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full" hidden>Stale</span>
+            </div>
+
+            <div id="summary-empty" class="text-sm text-slate-500 py-6 text-center" hidden>
+              <p class="mb-3">No summary yet.</p>
+              <button id="summary-generate" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded">
+                Generate summary
+              </button>
+            </div>
+
+            <div id="summary-loaded" hidden>
+              <button id="summary-refresh" class="mb-4 w-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium px-3 py-1.5 rounded">
+                Refresh summary
+              </button>
+
+              <div class="text-xs text-slate-400 mb-4">
+                Last refreshed <span id="summary-last-refreshed"></span> · <span id="summary-emails-count"></span> emails analyzed
+              </div>
+
+              <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Actors</h4>
+              <ul id="summary-actors" class="space-y-1 text-sm mb-4"></ul>
+
+              <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Conclusions</h4>
+              <ul id="summary-conclusions" class="list-disc list-outside ml-5 space-y-1 text-sm mb-4"></ul>
+
+              <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Action items</h4>
+              <ul id="summary-actions" class="space-y-2 text-sm"></ul>
+            </div>
+
+            <div id="summary-status" class="mt-4 text-sm" hidden></div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- REPORTS -->
+      <section id="screen-reports" hidden>
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-5">
+          <div class="flex items-center gap-4 mb-4 border-b border-slate-200">
+            <button data-report-tab="firm" class="px-3 py-2 text-sm font-medium border-b-2 border-indigo-600 text-indigo-600">My firm</button>
+            <button data-report-tab="global" class="px-3 py-2 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-900" hidden>Global</button>
+          </div>
+
+          <div class="flex flex-wrap items-end gap-3 mb-4">
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1">Since</label>
+              <input id="report-since" type="date" class="border border-slate-300 rounded px-2 py-1 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1">Until</label>
+              <input id="report-until" type="date" class="border border-slate-300 rounded px-2 py-1 text-sm" />
+            </div>
+            <button id="report-apply" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-1.5 rounded">Apply</button>
+            <button id="report-clear" class="text-sm text-slate-500 hover:text-slate-800">Clear</button>
+          </div>
+
+          <div id="report-403" class="text-sm text-slate-500 py-8 text-center" hidden>
+            Reports require admin or superuser role.
+          </div>
+
+          <div id="report-table-wrap" class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead id="report-thead" class="text-xs text-slate-500 uppercase border-b border-slate-200"></thead>
+              <tbody id="report-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+
+          <div id="report-pager" class="flex items-center justify-between mt-4 text-sm text-slate-500" hidden>
+            <span id="report-pager-info"></span>
+            <div class="flex gap-2">
+              <button id="report-prev" class="px-3 py-1 border border-slate-300 rounded disabled:opacity-50">Prev</button>
+              <button id="report-next" class="px-3 py-1 border border-slate-300 rounded disabled:opacity-50">Next</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="{% static 'app.js' %}"></script>
+  </body>
+</html>

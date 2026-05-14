@@ -48,7 +48,9 @@ celery -A email_assistant worker -l info -Q email_assistant # terminal B: refres
 > 8-core box; the real ceiling is OpenRouter's rate limit and our 10/min/firm
 > DRF throttle, not your CPU. No `--pool` flag needed on Linux/macOS.
 
-Then open **<http://localhost:8000/api/docs/>** for the full Swagger UI.
+Then open **<http://localhost:8000/>** for the demo UI (or **<http://localhost:8000/api/docs/>** for the full Swagger UI).
+
+The seed command prints sample thread UUIDs at the end of its output — copy one to paste into the UI's Thread input.
 
 ---
 
@@ -112,6 +114,8 @@ flowchart LR
     Worker -.->|JSON logs| LogFile
 ```
 
+**Demo UI** (`templates/index.html` + `static/app.js`): a single-page vanilla-JS app served by Django at `/`. Three screens — Login, Thread detail (with async refresh + polling), and admin/superuser Reports. Reports are **drillable**: each aggregate row (client for admins; firm for superusers) expands inline to the underlying summaries, and clicking any summary jumps straight to the Thread screen with that UUID loaded. Tailwind via CDN, no build step. Exists to make the backend's interesting flows clickable; not part of the case-study deliverable scope.
+
 **Apps (under `apps/`):**
 - `accounts` — `Firm`, `Accountant` (custom user model), JWT auth, custom token claims.
 - `core` — `RequestIdMiddleware`, contextvar-aware JSON logging, permissions (`IsInSameFirm`, `IsFirmAdmin`, `IsSuperuser`), `@log_action` decorator, healthcheck.
@@ -159,8 +163,11 @@ flowchart LR
 ### Caching & invalidation
 - Decrypted summary cached in Redis under `summary:{thread_id}`, TTL 1h.
 - Refresh task invalidates `summary:{thread_id}` and per-firm report keys on success.
-- Concurrent refreshes deduplicated via Redis SETNX lock `summary_lock:{thread_id}` (TTL 120s).
 - DRF `summary_refresh` throttle scope at 10/min/firm to keep LLM cost bounded.
+
+### Concurrent refresh handling (two layers of dedup)
+- **API-edge fan-in** (`summary_inflight:{thread_id}` in Redis, TTL 120s): `POST /api/threads/{id}/summary/refresh/` pre-generates a `task_id`, then `cache.add(inflight_key, task_id)`-claims it atomically. Concurrent triggers that lose the claim read the existing `task_id` and return `202 + {task_id, joined: true}` — so N simultaneous "Refresh" clicks all converge on **one task** that the UI polls. No fan-out at all to the worker layer. Cleared by the task's `finally` block.
+- **Worker-side lock** (`summary_lock:{thread_id}`, TTL 120s, same SETNX pattern): defensive — catches the rare case where the inflight key was claimed but the task slipped through dedup (e.g., inflight TTL race). Returns `{"status": "skipped", "reason": "another_refresh_in_progress"}` from the task, which the UI surfaces as *"Another refresh just completed — showing latest."* instead of falsely claiming "Summary refreshed."
 
 ### Staleness tracking
 - `EmailSummary.up_to_message_at` snapshots `max(messages.sent_at)` at refresh time.
@@ -199,6 +206,7 @@ python manage.py test
 | `GET`  | `/api/clients/` | JWT (firm-scoped) |
 | `GET`  | `/api/clients/{id}/` | JWT (firm-scoped) |
 | `GET`  | `/api/clients/{id}/threads/` | JWT (firm-scoped) |
+| `GET`  | `/api/threads/sample/` | JWT — small pick-list for the demo UI (firm-scoped; superuser sees cross-firm) |
 | `GET`  | `/api/threads/{id}/` | JWT (firm-scoped) |
 | `GET`  | `/api/threads/{id}/summary/` | JWT (firm-scoped) |
 | `POST` | `/api/threads/{id}/summary/refresh/` | JWT (firm-scoped, throttled) |
@@ -225,5 +233,5 @@ python manage.py test
 
 - CRUD endpoints for Firm / Client / Accountant (seeded only).
 - Multi-firm clients (the spec confirmed one firm per client).
-- A frontend.
+- A production frontend (a thin demo UI is bundled at `/` so the API is clickable, but it deliberately skips client/thread browsing — paste UUIDs from `seed_data` instead).
 - Production deployment / infra.

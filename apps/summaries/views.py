@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 
 from celery.result import AsyncResult
 from django.core.cache import cache
@@ -19,7 +20,12 @@ from apps.core.permissions import IsInSameFirm  # noqa: F401  (imported for futu
 from apps.emails.models import EmailThread
 from apps.summaries.repositories import SummaryRepository
 from apps.summaries.serializers import SummaryReadSerializer, TaskStatusSerializer
-from apps.summaries.services.cache import SUMMARY_TTL_SECONDS, summary_key
+from apps.summaries.services.cache import (
+    SUMMARY_TTL_SECONDS,
+    get_inflight,
+    summary_key,
+    try_claim_inflight,
+)
 from apps.summaries.tasks import refresh_summary_task
 
 logger = logging.getLogger(__name__)
@@ -97,6 +103,7 @@ class SummaryRefreshView(APIView):
                 fields={
                     "task_id": drf_serializers.CharField(),
                     "status_url": drf_serializers.CharField(),
+                    "joined": drf_serializers.BooleanField(),
                 },
             ),
             404: OpenApiResponse(description="Thread not found in your firm."),
@@ -110,16 +117,39 @@ class SummaryRefreshView(APIView):
                 {"detail": "Thread not found."}, status=status.HTTP_404_NOT_FOUND
             )
 
-        async_result = refresh_summary_task.apply_async(
-            args=[str(thread_id)],
-            headers={"request_id": getattr(request, "id", None)},
-        )
+        # Fan-in: if a refresh for this thread is already in flight, return its
+        # task_id so concurrent triggers all converge on the same poll instead
+        # of producing N parallel tasks (the worker's lock would skip them, but
+        # the user-facing UX is cleaner if we collapse at the API edge).
+        new_task_id = str(uuid.uuid4())
+        claimed = try_claim_inflight(str(thread_id), new_task_id)
+        if claimed:
+            refresh_summary_task.apply_async(
+                args=[str(thread_id)],
+                task_id=new_task_id,
+                headers={"request_id": getattr(request, "id", None)},
+            )
+            task_id, joined = new_task_id, False
+        else:
+            existing = get_inflight(str(thread_id))
+            if existing:
+                task_id, joined = existing, True
+            else:
+                # Inflight key vanished between claim and read (TTL race). Fall
+                # back to enqueuing under our pre-generated id; the worker's
+                # lock will dedup if needed.
+                refresh_summary_task.apply_async(
+                    args=[str(thread_id)],
+                    task_id=new_task_id,
+                    headers={"request_id": getattr(request, "id", None)},
+                )
+                task_id, joined = new_task_id, False
+
         return Response(
             {
-                "task_id": async_result.id,
-                "status_url": reverse(
-                    "task-status", kwargs={"task_id": async_result.id}
-                ),
+                "task_id": task_id,
+                "status_url": reverse("task-status", kwargs={"task_id": task_id}),
+                "joined": joined,
             },
             status=status.HTTP_202_ACCEPTED,
         )

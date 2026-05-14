@@ -10,6 +10,7 @@ from apps.summaries.services.cache import (
     acquire_lock,
     invalidate_firm_reports,
     invalidate_summary,
+    release_inflight,
     release_lock,
 )
 from apps.summaries.services.summarizer import SummaryService
@@ -43,3 +44,4 @@ def refresh_summary_task(self, thread_id: str) -> dict:
         }
     finally:
         release_lock(thread_id)
+        release_inflight(thread_id)

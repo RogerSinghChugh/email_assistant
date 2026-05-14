@@ -2,7 +2,11 @@
 
 from django.urls import path
 
-from apps.emails.views import ClientThreadListView, ThreadDetailView
+from apps.emails.views import (
+    ClientThreadListView,
+    SampleThreadListView,
+    ThreadDetailView,
+)
 
 urlpatterns = [
     path(
@@ -10,5 +14,6 @@ urlpatterns = [
         ClientThreadListView.as_view(),
         name="client-thread-list",
     ),
+    path("threads/sample/", SampleThreadListView.as_view(), name="thread-sample"),
     path("threads/<uuid:pk>/", ThreadDetailView.as_view(), name="thread-detail"),
 ]
