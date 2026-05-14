@@ -20,6 +20,108 @@ FAKER_SEED = 4242
 RANDOM_SEED = 4242
 PASSWORD = "Passw0rd!"  # noqa: S105 — seeded local dev only
 
+# Realistic-shaped CPA correspondence so the LLM has actual structure to summarize.
+# Bodies are short, mention concrete forms/deadlines/amounts, and balance between
+# "ask" / "confirm" / "follow-up" so action_items + conclusions populate.
+CLIENT_TEMPLATES = [
+    (
+        "Hi {accountant_first},\n\n"
+        "Please find attached the {form} for FY{year}. Let me know if you need anything else "
+        "before we finalize.\n\nThanks,\n{client_first}"
+    ),
+    (
+        "Hi {accountant_first},\n\n"
+        "Quick question — does the {expense} I paid last quarter qualify as a deductible "
+        "business expense? Receipts are in the drive folder.\n\n"
+        "{client_first}"
+    ),
+    (
+        "Hi {accountant_first},\n\n"
+        "Confirming — we're filing an extension and the new deadline is October 15, {year}, "
+        "correct? I want to make sure I send the estimated payment in time.\n\n"
+        "Best,\n{client_first}"
+    ),
+    (
+        "Hello,\n\n"
+        "I still haven't received the {form} from my broker. I'll forward it the moment it "
+        "arrives. Is the {deadline} cutoff still firm?\n\n"
+        "{client_first}"
+    ),
+    (
+        "Hi {accountant_first},\n\n"
+        "Need to update my mailing address on file for the {year} return — moved last month. "
+        "Can you let me know what you need from me?\n\n"
+        "{client_first}"
+    ),
+    (
+        "Hi {accountant_first},\n\n"
+        "Got it, thanks for the clarification. I'll send the {form} and the supporting "
+        "statements by end of week.\n\n"
+        "{client_first}"
+    ),
+]
+
+ACCOUNTANT_TEMPLATES = [
+    (
+        "Hi {client_first},\n\n"
+        "Received your {form} — thanks. I still need the {form2} before I can finalize the "
+        "return. Could you send it by {deadline}?\n\n"
+        "Best regards,\n{accountant_first}"
+    ),
+    (
+        "Hi {client_first},\n\n"
+        "Yes, {expense} qualifies as a deductible business expense as long as it's directly "
+        "tied to business use. Hold on to the receipts in case of audit.\n\n"
+        "Thanks,\n{accountant_first}"
+    ),
+    (
+        "Hi {client_first},\n\n"
+        "Confirming we've filed your extension. New filing deadline is October 15, {year}. "
+        "Please send an estimated payment of ${amount:,} by the original April deadline to "
+        "avoid penalties.\n\n"
+        "{accountant_first}"
+    ),
+    (
+        "Hi {client_first},\n\n"
+        "Good news — your {year} return has been filed and accepted by the IRS. Expected "
+        "refund of ${amount:,} should land in your account within 21 business days.\n\n"
+        "Regards,\n{accountant_first}"
+    ),
+    (
+        "Hi {client_first},\n\n"
+        "Following up — we still don't have your {form}. Without it we can't proceed with "
+        "the return. Please send by {deadline} so we stay on schedule.\n\n"
+        "{accountant_first}"
+    ),
+    (
+        "Hi {client_first},\n\n"
+        "Quick update — finished reviewing the {form}. One item needs clarification: the "
+        "${amount:,} entry under 'consulting income'. Can you confirm whether that was paid "
+        "by a single payer or multiple?\n\n"
+        "Thanks,\n{accountant_first}"
+    ),
+]
+
+FORMS = [
+    "K-1",
+    "1099-MISC",
+    "1099-NEC",
+    "W-2",
+    "1098",
+    "Schedule C",
+    "Schedule E",
+    "Form 5498",
+]
+DEADLINES = ["March 31", "April 1", "April 5", "April 10", "April 15"]
+EXPENSES = [
+    "home office setup",
+    "vehicle mileage",
+    "client lunch",
+    "software subscription",
+    "conference travel",
+    "professional development course",
+]
+
 
 class Command(BaseCommand):
     help = "Seed firms, accountants, clients, email threads and messages (idempotent)."
@@ -197,10 +299,15 @@ class Command(BaseCommand):
                 )
                 last_sent = first_at
                 for m_idx in range(msg_count):
-                    sender, recipients = self._sender_recipients(
+                    sender, recipients, accountant = self._sender_recipients(
                         kind, m_idx, client, accountants
                     )
                     sent_at = last_sent + timedelta(hours=random.randint(1, 26))
+                    body = self._render_body(
+                        sender_is_client=(sender == client.email),
+                        client=client,
+                        accountant=accountant,
+                    )
                     EmailMessage.objects.create(
                         thread=thread,
                         client=client,
@@ -208,9 +315,7 @@ class Command(BaseCommand):
                         external_message_id=f"{external_thread_id}-m{m_idx + 1}",
                         sender_email=sender,
                         recipients=recipients,
-                        encrypted_body=fake.paragraph(
-                            nb_sentences=random.randint(3, 8)
-                        ),
+                        encrypted_body=body,
                         sent_at=sent_at,
                     )
                     last_sent = sent_at
@@ -244,7 +349,7 @@ class Command(BaseCommand):
         m_idx: int,
         client: Client,
         accountants: list[Accountant],
-    ) -> tuple[str, dict]:
+    ) -> tuple[str, dict, Accountant]:
         # Alternate sender between client and accountants.
         primary_accountant = accountants[m_idx % len(accountants)]
         if m_idx % 2 == 0:
@@ -261,7 +366,30 @@ class Command(BaseCommand):
         elif kind in ("long", "very_long") and m_idx % 3 == 0:
             cc = [accountants[(m_idx + 1) % len(accountants)].email]
 
-        return sender, {"to": to, "cc": cc}
+        return sender, {"to": to, "cc": cc}, primary_accountant
+
+    def _render_body(
+        self,
+        *,
+        sender_is_client: bool,
+        client: Client,
+        accountant: Accountant,
+    ) -> str:
+        templates = CLIENT_TEMPLATES if sender_is_client else ACCOUNTANT_TEMPLATES
+        tmpl = random.choice(templates)
+        client_first = (client.name or "there").split()[0]
+        accountant_first = accountant.first_name or "team"
+        form, form2 = random.sample(FORMS, 2)
+        return tmpl.format(
+            client_first=client_first,
+            accountant_first=accountant_first,
+            form=form,
+            form2=form2,
+            year=random.choice(["2024", "2025"]),
+            deadline=random.choice(DEADLINES),
+            expense=random.choice(EXPENSES),
+            amount=random.randint(500, 25_000),
+        )
 
     def _print_summary(
         self,

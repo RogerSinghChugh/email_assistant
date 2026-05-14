@@ -58,7 +58,9 @@ class SummaryService:
 
     @staticmethod
     def _build_prompt(thread: EmailThread, messages: list[EmailMessage]) -> str:
+        today = timezone.now().date().isoformat()
         lines = [
+            f"Today: {today}",
             f"Subject: {thread.encrypted_subject}",
             f"Client: {thread.client.name} <{thread.client.email}>",
             "",
