@@ -62,17 +62,17 @@ Then open:
 
 ```mermaid
 flowchart LR
-    Client[API Client / Demo UI] -->|JWT| API[DRF API<br/>email_assistant]
-    API -->|read/write| DB[(SQLite / Postgres)]
-    API -->|cache get/set| Redis[(Redis)]
-    API -->|enqueue refresh| Broker[Redis Broker]
-    Broker --> Worker[Celery Worker]
-    Worker -->|chat.completions| OpenRouter[(OpenRouter<br/>any LLM)]
+    Client["API Client / Demo UI"] -->|JWT| API["DRF API"]
+    API -->|"read + write"| DB[("SQLite / Postgres")]
+    API -->|cache| Redis[(Redis)]
+    API -->|enqueue| Broker["Redis Broker"]
+    Broker --> Worker["Celery Worker"]
+    Worker -->|HTTP| OpenRouter[("OpenRouter")]
     Worker -->|upsert| DB
     Worker -->|invalidate| Redis
-    API -.->|JSON logs + traces| OTel[OpenTelemetry]
-    Worker -.->|JSON logs + traces| OTel
-    OTel -.->|OTLP| Grafana[(Grafana Cloud)]
+    API -.->|OTLP| OTel["OpenTelemetry SDK"]
+    Worker -.->|OTLP| OTel
+    OTel -.-> Grafana[("Grafana Cloud")]
 ```
 
 **Apps under `apps/`:**
