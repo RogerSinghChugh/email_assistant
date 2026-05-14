@@ -23,7 +23,10 @@ cp .env.example .env
 python manage.py migrate
 python manage.py seed_data        # 4 firms, 26 users, 60 clients, 100 threads, 800+ messages
 
-# 4. Run (two terminals)
+# 4. Run — one command spawns both Django and the Celery worker
+.\dev.ps1            # Windows (PowerShell) — opens a window each for runserver + worker
+
+# Or manually:
 python manage.py runserver                                  # terminal A: API on :8000
 celery -A email_assistant worker -l info -Q email_assistant # terminal B: refresh worker
 ```
