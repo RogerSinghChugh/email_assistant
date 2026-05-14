@@ -15,3 +15,12 @@ factory-boy>=3.3
 drf-spectacular>=0.27
 pre-commit==4.6.0
 locust>=2.30
+
+# OpenTelemetry — gated on OTEL_ENABLED env var; safe to drop if you never use it.
+opentelemetry-distro>=0.49b0
+opentelemetry-exporter-otlp-proto-http>=1.28
+opentelemetry-instrumentation-django>=0.49b0
+opentelemetry-instrumentation-celery>=0.49b0
+opentelemetry-instrumentation-redis>=0.49b0
+opentelemetry-instrumentation-httpx>=0.49b0
+opentelemetry-instrumentation-sqlite3>=0.49b0  # swap for psycopg2 in prod

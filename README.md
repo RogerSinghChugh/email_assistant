@@ -262,6 +262,37 @@ Both `runserver` and `celery worker` must be up; the seeded credentials are bake
 
 ---
 
+## Observability (OpenTelemetry → Grafana Cloud / Signoz / any OTLP backend)
+
+Telemetry is wired in but **off by default** — flip it on with one env var, no code change.
+
+**What ships when enabled:**
+- **Traces** for every HTTP request and every Celery task, with trace context propagated through task headers so one trace spans `view → cache → enqueue → worker → LLM call → DB write`.
+- **Logs** exported via OTLP, automatically tagged with the active `trace_id` + `span_id` — clicking a trace in Grafana shows its log lines, and clicking a log line shows its trace.
+- **Auto-instrumented libraries:** Django (DRF views), Celery (tasks + signals), Redis (cache + broker), httpx (the OpenAI SDK's outbound calls), sqlite3 (DB queries — swap for psycopg2 in prod).
+- **What you keep:** the on-disk JSON logfile at `logs/app.log` is unchanged; its lines now also carry `trace_id` and `span_id` so even grep correlates with traces.
+
+**Turn it on:**
+
+```env
+# .env additions
+OTEL_ENABLED=true
+OTEL_SERVICE_NAME=email_assistant
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-prod-us-east-0.grafana.net/otlp
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64(instance_id:api_token)>
+```
+
+Get the endpoint and Authorization value from **Grafana Cloud → Connections → Add → OpenTelemetry**. Then restart both `runserver` and `celery worker` — same commands as before, no wrapper needed.
+
+**Where the wiring lives:**
+- `apps/core/telemetry.py` — single `setup_telemetry()` entry point, gated by `OTEL_ENABLED`, idempotent, called from `CoreConfig.ready()` (so it fires in both the web process and the Celery worker).
+- `apps/core/logging.py` — `ContextFilter` reads `current_trace_id()` / `current_span_id()` and stamps them onto every `LogRecord`.
+
+**Off-switch semantics.** With `OTEL_ENABLED=false`, `setup_telemetry()` returns immediately — no exporters, no instrumentation, no patching. Tests and dev runs are unaffected. Switching providers later (Signoz, Honeycomb, Axiom) is a config change, not a code change.
+
+---
+
 ## Deployment notes (not wired here, but worth doing)
 
 - **Redis eviction policy.** Set `maxmemory-policy allkeys-lru` (or `volatile-lru` if you want to protect un-TTL'd keys — we don't have any). Default is `noeviction`, which makes Redis hard-error on writes when memory is full. With `allkeys-lru`, cold summary entries are evicted first; the lock and inflight keys (TTL 120s) are the youngest and survive.

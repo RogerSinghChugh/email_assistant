@@ -187,7 +187,8 @@ LOG_FILE = LOG_DIR / "app.log"
 
 _LOG_FORMAT = (
     "%(asctime)s %(levelname)s %(name)s %(message)s "
-    "%(request_id)s %(user_id)s %(firm_id)s %(action)s %(duration_ms)s"
+    "%(request_id)s %(user_id)s %(firm_id)s %(action)s %(duration_ms)s "
+    "%(trace_id)s %(span_id)s"
 )
 
 LOGGING = {
@@ -202,7 +203,7 @@ LOGGING = {
             "format": _LOG_FORMAT,
         },
         "console": {
-            "format": "[%(asctime)s] %(levelname)s %(name)s [req=%(request_id)s user=%(user_id)s firm=%(firm_id)s] %(message)s",
+            "format": "[%(asctime)s] %(levelname)s %(name)s [req=%(request_id)s user=%(user_id)s firm=%(firm_id)s trace=%(trace_id)s] %(message)s",
         },
     },
     "handlers": {
@@ -229,6 +230,14 @@ LOGGING = {
             "propagate": False,
         },
         "django.request": {
+            "handlers": ["console", "logfile"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        # Silence the dev server's per-request INFO access log — duplicates
+        # what ``apps.core.requests`` emits with full context (request_id,
+        # user_id, trace_id). Server-side errors still surface at WARNING+.
+        "django.server": {
             "handlers": ["console", "logfile"],
             "level": "WARNING",
             "propagate": False,

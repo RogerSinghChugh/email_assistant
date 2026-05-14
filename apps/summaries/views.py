@@ -16,6 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.baggage import request_baggage
 from apps.core.permissions import IsInSameFirm  # noqa: F401  (imported for future per-object checks)
 from apps.emails.models import EmailThread
 from apps.summaries.repositories import SummaryRepository
@@ -121,29 +122,27 @@ class SummaryRefreshView(APIView):
         # task_id so concurrent triggers all converge on the same poll instead
         # of producing N parallel tasks (the worker's lock would skip them, but
         # the user-facing UX is cleaner if we collapse at the API edge).
+        #
+        # ``request_baggage`` puts request_id/user_id/firm_id into the OTel
+        # context — CeleryInstrumentor serializes baggage into task headers, so
+        # the worker's log lines inherit the same identifiers.
         new_task_id = str(uuid.uuid4())
-        claimed = try_claim_inflight(str(thread_id), new_task_id)
-        if claimed:
-            refresh_summary_task.apply_async(
-                args=[str(thread_id)],
-                task_id=new_task_id,
-                headers={"request_id": getattr(request, "id", None)},
-            )
-            task_id, joined = new_task_id, False
-        else:
-            existing = get_inflight(str(thread_id))
-            if existing:
-                task_id, joined = existing, True
-            else:
-                # Inflight key vanished between claim and read (TTL race). Fall
-                # back to enqueuing under our pre-generated id; the worker's
-                # lock will dedup if needed.
+        with request_baggage(request):
+            claimed = try_claim_inflight(str(thread_id), new_task_id)
+            if claimed:
                 refresh_summary_task.apply_async(
-                    args=[str(thread_id)],
-                    task_id=new_task_id,
-                    headers={"request_id": getattr(request, "id", None)},
+                    args=[str(thread_id)], task_id=new_task_id
                 )
                 task_id, joined = new_task_id, False
+            else:
+                existing = get_inflight(str(thread_id))
+                if existing:
+                    task_id, joined = existing, True
+                else:
+                    refresh_summary_task.apply_async(
+                        args=[str(thread_id)], task_id=new_task_id
+                    )
+                    task_id, joined = new_task_id, False
 
         return Response(
             {

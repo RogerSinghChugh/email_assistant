@@ -25,7 +25,13 @@ firm_id_var: ContextVar[str | None] = ContextVar("firm_id", default=None)
 
 
 class ContextFilter(logging.Filter):
-    """Pull request_id / user_id / firm_id / action / duration_ms from contextvars + record."""
+    """Pull contextvars + active OTel span ids onto every record.
+
+    Adds:
+      - request_id / user_id / firm_id (contextvars set by middleware/Celery signals)
+      - trace_id / span_id (from the active OpenTelemetry span; "-" when OTel off)
+      - action / duration_ms (defaulted; populated by @log_action decorator)
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = request_id_var.get() or "-"
@@ -35,6 +41,27 @@ class ContextFilter(logging.Filter):
             record.action = "-"
         if not hasattr(record, "duration_ms"):
             record.duration_ms = "-"
+
+        # Cross-process fallback: OTel baggage propagates these from the web
+        # process to the Celery worker via task headers. In the worker the local
+        # contextvars are empty; baggage carries the values forward.
+        if "-" in (record.request_id, record.user_id, record.firm_id):
+            try:
+                from opentelemetry import baggage
+
+                if record.request_id == "-":
+                    record.request_id = baggage.get_baggage("request_id") or "-"
+                if record.user_id == "-":
+                    record.user_id = baggage.get_baggage("user_id") or "-"
+                if record.firm_id == "-":
+                    record.firm_id = baggage.get_baggage("firm_id") or "-"
+            except ImportError:
+                pass
+
+        from apps.core.telemetry import current_span_id, current_trace_id
+
+        record.trace_id = current_trace_id()
+        record.span_id = current_span_id()
         return True
 
 

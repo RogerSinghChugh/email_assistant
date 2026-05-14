@@ -8,6 +8,8 @@ class CoreConfig(AppConfig):
 
     def ready(self) -> None:
         from apps.core.logging import ensure_log_dir, register_celery_signal_handlers
+        from apps.core.telemetry import setup_telemetry
 
         ensure_log_dir()
         register_celery_signal_handlers()
+        setup_telemetry()
