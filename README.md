@@ -230,6 +230,38 @@ python manage.py test
 
 ---
 
+## Load testing (Locust)
+
+`locustfile.py` ships four user classes — pass class names as **positional args** to pick a scenario (omit for the weighted mix of all classes):
+
+```bash
+pip install -r requirements.txt  # locust is in there
+
+# Web UI — picker shows up at http://localhost:8089
+locust -f locustfile.py --host http://localhost:8000
+
+# Headless: realistic read-heavy mix, 50 users ramping at 5/s for 60s
+locust -f locustfile.py --host http://localhost:8000 \
+    --headless -u 50 -r 5 -t 60s ReaderUser
+
+# Fan-in proof — many users hammer ONE thread, watch joined=true on most 202s
+locust -f locustfile.py --host http://localhost:8000 \
+    --headless -u 30 -r 30 -t 30s DedupHammerUser
+
+# Reports under load
+locust -f locustfile.py --host http://localhost:8000 \
+    AdminReportUser SuperReportUser
+```
+
+What each scenario checks:
+- `ReaderUser`: realistic 95/5 read/write mix. Watches cache hit rate, p99 GET latency, DRF throttle behavior. 404s on `GET .../summary/` are *expected* for threads without summaries — Locust counts them as successes.
+- `DedupHammerUser`: the fan-in story — N users posting refresh on one Firm-1 thread should overwhelmingly return `joined: true` and produce a single Celery task. Watch the worker log to see the actual run count.
+- `AdminReportUser` / `SuperReportUser`: hits `/api/reports/firm/` and `/api/reports/global/` — the heavy aggregation path. More interesting once you grow the dataset (`seed_data --threads-per-firm=500`).
+
+Both `runserver` and `celery worker` must be up; the seeded credentials are baked into the Locust user pool.
+
+---
+
 ## Deployment notes (not wired here, but worth doing)
 
 - **Redis eviction policy.** Set `maxmemory-policy allkeys-lru` (or `volatile-lru` if you want to protect un-TTL'd keys — we don't have any). Default is `noeviction`, which makes Redis hard-error on writes when memory is full. With `allkeys-lru`, cold summary entries are evicted first; the lock and inflight keys (TTL 120s) are the youngest and survive.
