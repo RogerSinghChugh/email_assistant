@@ -121,6 +121,9 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_RESULT_EXPIRES = 3600
 CELERY_TIMEZONE = "UTC"
 CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+# Dedicated queue so this app's tasks aren't consumed by other Celery apps
+# sharing the same Redis broker on this machine.
+CELERY_TASK_DEFAULT_QUEUE = "email_assistant"
 
 # --- DRF ----------------------------------------------------------------
 REST_FRAMEWORK = {

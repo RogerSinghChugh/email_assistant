@@ -42,6 +42,41 @@ class LLMError(RuntimeError):
     """Anything went wrong calling the LLM or parsing its output."""
 
 
+def _sanitize_payload(data: Any) -> Any:
+    """Drop obviously-malformed list entries the LLM sometimes emits.
+
+    Some free-tier models occasionally produce ``{"name": null, ...}`` actor
+    entries or action items with no description. The schema's hard fields
+    stay strict — we just discard junk rather than fail the whole task.
+    """
+    if not isinstance(data, dict):
+        return data
+    actors = data.get("actors")
+    if isinstance(actors, list):
+        data["actors"] = [
+            a
+            for a in actors
+            if isinstance(a, dict)
+            and isinstance(a.get("name"), str)
+            and a["name"].strip()
+        ]
+    items = data.get("action_items")
+    if isinstance(items, list):
+        data["action_items"] = [
+            i
+            for i in items
+            if isinstance(i, dict)
+            and isinstance(i.get("description"), str)
+            and i["description"].strip()
+        ]
+    conclusions = data.get("conclusions")
+    if isinstance(conclusions, list):
+        data["conclusions"] = [
+            c for c in conclusions if isinstance(c, str) and c.strip()
+        ]
+    return data
+
+
 class LLMClient:
     def __init__(
         self,
@@ -68,6 +103,7 @@ class LLMClient:
                 extra={"action": "llm.json_parse_failed", "duration_ms": "-"},
             )
             raise LLMError(f"LLM returned non-JSON output: {exc}") from exc
+        data = _sanitize_payload(data)
         try:
             return SummaryPayload.model_validate(data)
         except ValidationError as exc:

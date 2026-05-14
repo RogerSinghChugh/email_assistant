@@ -24,20 +24,29 @@ python manage.py migrate
 python manage.py seed_data        # 4 firms, 26 users, 60 clients, 100 threads, 800+ messages
 
 # 4. Run (two terminals)
-python manage.py runserver        # terminal A: API on :8000
-celery -A email_assistant worker -l info   # terminal B: refresh worker
+python manage.py runserver                                  # terminal A: API on :8000
+celery -A email_assistant worker -l info -Q email_assistant # terminal B: refresh worker
 ```
 
+> **`-Q email_assistant` matters.** The app declares a dedicated queue
+> (`CELERY_TASK_DEFAULT_QUEUE = "email_assistant"`) so its tasks aren't silently
+> consumed by other Celery apps sharing the same Redis broker on your machine —
+> a common gotcha during local development when several Django projects all
+> point at `redis://127.0.0.1:6379/0`. Symptom of forgetting: tasks stay
+> `PENDING` forever even though Redis received them.
+>
 > **Windows note:** Celery's default `prefork` pool relies on POSIX semaphore
 > primitives that don't work on Windows (you'll see `PermissionError: [WinError 5]`
 > from `billiard.synchronize._semlock`). Run with `--pool=threads` (recommended —
 > our refresh task is I/O-bound on the LLM HTTP call) or `--pool=solo`:
 >
 > ```powershell
-> celery -A email_assistant worker -l info --pool=threads --concurrency=4
+> celery -A email_assistant worker -l info --pool=threads --concurrency=8 -Q email_assistant
 > ```
 >
-> No flag needed on Linux/macOS.
+> `--concurrency=8` is a reasonable starting point for I/O-bound work on a modern
+> 8-core box; the real ceiling is OpenRouter's rate limit and our 10/min/firm
+> DRF throttle, not your CPU. No `--pool` flag needed on Linux/macOS.
 
 Then open **<http://localhost:8000/api/docs/>** for the full Swagger UI.
 
@@ -135,6 +144,7 @@ flowchart LR
 - Encrypted columns: `EmailThread.encrypted_subject`, `EmailMessage.encrypted_body`, `EmailSummary.encrypted_payload`.
 - Left cleartext intentionally: `sender_email`, `recipients` — needed for actor extraction, AuthZ filtering, and admin reports. Protected by AuthZ + transport + disk encryption.
 - **Trade-off**: random IV makes the ciphertext non-deterministic → no `LIKE` / FTS search on subject/body. Acceptable for the current scope; flagged for future deterministic-encryption work.
+- **Gotcha to know.** The library catches `InvalidToken` silently in `to_python` and returns the *raw ciphertext* instead of raising. That means if `SECRET_KEY` or `SALT_KEYS` change after data is written, the API will return Fernet ciphertext (`gAAAAA...`) where plaintext should be — with no error in the logs. If you ever see that, either rotate via `SECRET_KEY_FALLBACKS` + multi-entry `SALT_KEYS`, or wipe `db.sqlite3` and re-seed.
 
 ### AuthZ
 - **Firm-wide visibility**: any accountant in a firm can read any client/thread/summary in that firm. The seed schema *had* an `AccountantClient` join table; we dropped it after spec clarification.
@@ -159,6 +169,7 @@ flowchart LR
 - **OpenRouter via the official `openai` SDK** (`base_url=https://openrouter.ai/api/v1`). Swap underlying models (Gemini, Claude, GPT…) with one env var (`LLM_MODEL`).
 - Default model `google/gemini-2.0-flash-001` (cheap + fast). `response_format={"type": "json_object"}` + Pydantic post-validation keeps the boundary honest.
 - `tenacity` exponential-backoff retries on `APITimeoutError`, `APIConnectionError`, `RateLimitError`.
+- **Defensive parsing.** Free-tier models occasionally emit `{"name": null}` actor entries or empty-string action items. `_sanitize_payload` in `llm_client.py` drops obviously-malformed list entries *before* Pydantic validation — schema hard fields stay strict; the rest fails closed.
 - **Privacy rule**: LLM logs only sizes + duration + retry count — **never raw email body**.
 
 ### Logging
